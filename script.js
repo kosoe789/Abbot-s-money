@@ -7,15 +7,20 @@ const SHEETS = { incomes: 'incomes', outgoings: 'outgoings' };
 // Columns to exclude
 const EXCLUDE_COLS = ['အစဥ်'];
 
+// Desired column order (Sheet names)
+const COL_ORDER = ['နာမည်', 'ပမာဏ', 'အကြောင်းအရာ', 'ရက်စွဲ'];
+
+// Display name overrides
+const COL_DISPLAY = { 'နာမည်': 'ငွေသွင်း/ထုတ်သူ' };
+
 // ================================================================
 //  STATE
 // ================================================================
 let allRows = [];
-let combinedHeaders = [];
+let combinedHeaders = []; // actual sheet col names (for logic)
 
 // ================================================================
-//  FETCH — Sheet has title in row1, empty row2, headers in row3
-//  So we fetch with range starting from row 3
+//  FETCH
 // ================================================================
 function sheetUrl(name) {
   return `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(name)}&range=A3:Z1000`;
@@ -25,7 +30,6 @@ async function fetchSheet(name) {
   const res = await fetch(sheetUrl(name));
   const text = await res.text();
   const json = JSON.parse(text.slice(text.indexOf('(') + 1, text.lastIndexOf(')')));
-
   const cols = json.table.cols.map(c => (c.label || c.id || '').trim());
   const rows = (json.table.rows || []).map(row =>
     row.c.map(cell => {
@@ -48,7 +52,6 @@ async function init() {
       fetchSheet(SHEETS.outgoings)
     ]);
 
-    // Keep only non-excluded, non-empty columns
     function getKeepIndices(cols) {
       return cols
         .map((c, i) => ({ col: c, idx: i }))
@@ -58,13 +61,18 @@ async function init() {
     const incKeep = getKeepIndices(inc.cols);
     const outKeep = getKeepIndices(out.cols);
 
-    // Build unified headers
-    const incColNames = incKeep.map(k => k.col);
-    const outColNames = outKeep.map(k => k.col);
-    combinedHeaders = [...incColNames];
-    outColNames.forEach(c => { if (c && !combinedHeaders.includes(c)) combinedHeaders.push(c); });
+    // Build union of columns
+    const allCols = [...new Set([
+      ...incKeep.map(k => k.col),
+      ...outKeep.map(k => k.col)
+    ])];
 
-    // Map row to combined headers
+    // Sort by desired order, then any extras at end
+    combinedHeaders = [
+      ...COL_ORDER.filter(c => allCols.includes(c)),
+      ...allCols.filter(c => !COL_ORDER.includes(c))
+    ];
+
     function mapRow(row, keepList, type) {
       const valMap = {};
       keepList.forEach(({ col, idx }) => {
@@ -118,7 +126,7 @@ function buildNameFilter() {
 }
 
 // ================================================================
-//  SUMMARY — ပမာဏ column (index 1, value "ပမာဏ") ကနေ တွက်မည်
+//  SUMMARY
 // ================================================================
 function getAmountColIndex() {
   const idx = combinedHeaders.findIndex(h => h.includes('ပမာဏ'));
@@ -164,6 +172,7 @@ function renderTable(rows) {
   const thead  = document.getElementById('main-thead');
   const tbody  = document.getElementById('main-tbody');
   const nodata = document.getElementById('nodata-main');
+  const amtIdx = getAmountColIndex();
 
   // Header
   thead.innerHTML = '';
@@ -171,7 +180,10 @@ function renderTable(rows) {
   const thNum = document.createElement('th'); thNum.textContent = 'စဉ်'; tr.appendChild(thNum);
   const thType = document.createElement('th'); thType.textContent = 'အမျိုးအစား'; tr.appendChild(thType);
   combinedHeaders.forEach((h, hi) => {
-    const th = document.createElement("th"); th.textContent = h; if (hi === getAmountColIndex()) th.classList.add("col-amount"); tr.appendChild(th);
+    const th = document.createElement('th');
+    th.textContent = COL_DISPLAY[h] || h;
+    if (hi === amtIdx) { th.classList.add('col-amount'); }
+    tr.appendChild(th);
   });
   thead.appendChild(tr);
 
@@ -179,8 +191,6 @@ function renderTable(rows) {
   tbody.innerHTML = '';
   if (rows.length === 0) { nodata.style.display = 'block'; return; }
   nodata.style.display = 'none';
-
-  const amtIdx = getAmountColIndex();
 
   rows.forEach((row, i) => {
     const tr = document.createElement('tr');
@@ -205,8 +215,8 @@ function renderTable(rows) {
         const num = parseAmount(val);
         if (!isNaN(num)) {
           td.classList.add(isIncome ? 'num-income' : 'num-outgoing');
+          td.classList.add('col-amount');
           td.textContent = Math.round(num).toLocaleString('en-US');
-          td.style.textAlign = 'right';
         } else {
           td.textContent = val;
         }
