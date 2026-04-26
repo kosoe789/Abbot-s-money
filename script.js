@@ -1,131 +1,186 @@
 // ================================================================
-//  CONFIG — သင့် Google Sheet ID ထည့်ပါ
+//  CONFIG
 // ================================================================
 const SHEET_ID = '1LpXHsyhyjmOV_S5BYw7imBwgHIsSMsaE6Qt6VyVtuos';
-
-// Sheet names (Google Sheets ထဲမှ Sheet tab နာမည်တိတိပပ ထည့်ပါ)
-const SHEETS = {
-  incomes:   'incomes',
-  outgoings: 'outgoings'
-};
+const SHEETS = { incomes: 'incomes', outgoings: 'outgoings' };
 
 // ================================================================
 //  STATE
 // ================================================================
-let allData = { incomes: [], outgoings: [] };
-let headers = { incomes: [], outgoings: [] };
-let activeTab = 'incomes';
+let allRows = [];       // combined rows: { type, cols:[] }
+let combinedHeaders = [];
 
 // ================================================================
-//  FETCH SHEET DATA via Google Visualization API (no API key needed)
+//  FETCH
 // ================================================================
-function sheetUrl(sheetName) {
-  return `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(sheetName)}`;
+function sheetUrl(name) {
+  return `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(name)}`;
 }
 
-async function fetchSheet(sheetName) {
-  const url = sheetUrl(sheetName);
-  const res = await fetch(url);
+async function fetchSheet(name) {
+  const res = await fetch(sheetUrl(name));
   const text = await res.text();
-  // Google wraps response in: google.visualization.Query.setResponse({...});
-  const jsonStr = text.slice(text.indexOf('(') + 1, text.lastIndexOf(')'));
-  const json = JSON.parse(jsonStr);
-  return json;
-}
-
-function parseGvizResponse(json) {
+  const json = JSON.parse(text.slice(text.indexOf('(') + 1, text.lastIndexOf(')')));
   const cols = json.table.cols.map(c => c.label || c.id);
-  const rows = (json.table.rows || []).map(row => {
-    return row.c.map(cell => {
+  const rows = (json.table.rows || []).map(row =>
+    row.c.map(cell => {
       if (!cell) return '';
       return cell.f !== undefined && cell.f !== null ? cell.f : (cell.v !== null && cell.v !== undefined ? cell.v : '');
-    });
-  });
+    })
+  );
   return { cols, rows };
 }
 
 // ================================================================
-//  INIT — load both sheets
+//  INIT
 // ================================================================
 async function init() {
-  await Promise.all([
-    loadSheet('incomes'),
-    loadSheet('outgoings')
-  ]);
-  updateSummary();
-  populateFilters();
-  applyFilters();
-  document.getElementById('last-updated').textContent =
-    'နောက်ဆုံးပြင်ဆင်ချိန်: ' + new Date().toLocaleString('my-MM');
-}
-
-async function loadSheet(sheetKey) {
-  const loadingEl = document.getElementById(`loading-${sheetKey}`);
   try {
-    const json = await fetchSheet(SHEETS[sheetKey]);
-    const { cols, rows } = parseGvizResponse(json);
-    headers[sheetKey] = cols;
-    allData[sheetKey] = rows;
-    renderTable(sheetKey, rows, cols);
-    loadingEl.style.display = 'none';
+    const [inc, out] = await Promise.all([
+      fetchSheet(SHEETS.incomes),
+      fetchSheet(SHEETS.outgoings)
+    ]);
+
+    // Build unified headers: merge both sheets' headers (excluding duplicate "မေဃဝတီဆရာတော်နှင့်ဆက်စပ်သုံးငွေစာရင်း" type cols)
+    const EXCLUDE = ['မေဃဝတီဆရာတော်နှင့်ဆက်စပ်သုံးငွေစာရင်း'];
+
+    const incCols = inc.cols.filter(c => !EXCLUDE.includes(c.trim()));
+    const outCols = out.cols.filter(c => !EXCLUDE.includes(c.trim()));
+
+    // Use incomes headers as base, add any extra from outgoings
+    combinedHeaders = [...incCols];
+    outCols.forEach(c => { if (!combinedHeaders.includes(c)) combinedHeaders.push(c); });
+
+    // Map rows to combined headers
+    function mapRow(row, origCols, type) {
+      const filtered = origCols
+        .map((col, i) => ({ col: col.trim(), val: row[i] !== undefined ? row[i] : '' }))
+        .filter(({ col }) => !EXCLUDE.includes(col));
+
+      const mapped = combinedHeaders.map(h => {
+        const found = filtered.find(f => f.col === h);
+        return found ? found.val : '';
+      });
+      return { type, cols: mapped };
+    }
+
+    // Filter out completely empty rows
+    const incRows = inc.rows
+      .filter(r => r.some(c => String(c).trim() !== ''))
+      .map(r => mapRow(r, inc.cols, 'ဝင်ငွေ'));
+    const outRows = out.rows
+      .filter(r => r.some(c => String(c).trim() !== ''))
+      .map(r => mapRow(r, out.cols, 'ထွက်ငွေ'));
+
+    allRows = [...incRows, ...outRows];
+
+    document.getElementById('loading-main').style.display = 'none';
+
+    buildColFilter();
+    updateSummary();
+    applyFilters();
+
+    document.getElementById('last-updated').textContent =
+      'နောက်ဆုံးပြင်ဆင်ချိန်: ' + new Date().toLocaleString('my-MM');
   } catch (e) {
-    loadingEl.innerHTML = `<span style="color:#e74c3c">❌ Sheet ဖတ်၍မရပါ။ Sheet ကို <b>Anyone with link - Viewer</b> ထားပြီး refresh လုပ်ပါ။</span>`;
-    console.error(`Error loading ${sheetKey}:`, e);
+    document.getElementById('loading-main').innerHTML =
+      `<span style="color:#e74c3c">❌ Sheet ဖတ်၍မရပါ။ Sheet ကို <b>Anyone with link → Viewer</b> ထားပြီး refresh လုပ်ပါ။</span>`;
+    console.error(e);
   }
 }
 
 // ================================================================
-//  RENDER TABLE
+//  BUILD COLUMN FILTER (first non-empty column values)
 // ================================================================
-function renderTable(sheetKey, rows, cols) {
-  const thead = document.getElementById(`thead-${sheetKey}`);
-  const tbody = document.getElementById(`tbody-${sheetKey}`);
-  const nodata = document.getElementById(`nodata-${sheetKey}`);
+function buildColFilter() {
+  const sel = document.getElementById('col-filter');
+  const vals = [...new Set(allRows.map(r => String(r.cols[0])).filter(Boolean))];
+  sel.innerHTML = '<option value="">အားလုံး</option>';
+  vals.forEach(v => {
+    const o = document.createElement('option');
+    o.value = v; o.textContent = v;
+    sel.appendChild(o);
+  });
+}
+
+// ================================================================
+//  SUMMARY
+// ================================================================
+function sumAmount(rows) {
+  let total = 0;
+  rows.forEach(r => {
+    for (let i = r.cols.length - 1; i >= 0; i--) {
+      const v = parseFloat(String(r.cols[i]).replace(/,/g, ''));
+      if (!isNaN(v)) { total += v; break; }
+    }
+  });
+  return total;
+}
+
+function fmt(n) { return n.toLocaleString('en-US'); }
+
+function updateSummary() {
+  const inc = sumAmount(allRows.filter(r => r.type === 'ဝင်ငွေ'));
+  const out = sumAmount(allRows.filter(r => r.type === 'ထွက်ငွေ'));
+  const bal = inc - out;
+  document.getElementById('total-income').textContent   = fmt(inc);
+  document.getElementById('total-outgoing').textContent = fmt(out);
+  const balEl = document.getElementById('balance');
+  balEl.textContent = fmt(bal);
+  balEl.style.color = bal >= 0 ? 'var(--income-green)' : 'var(--outgoing-red)';
+}
+
+// ================================================================
+//  RENDER
+// ================================================================
+function renderTable(rows) {
+  const thead = document.getElementById('main-thead');
+  const tbody = document.getElementById('main-tbody');
+  const nodata = document.getElementById('nodata-main');
 
   // Header
   thead.innerHTML = '';
   const tr = document.createElement('tr');
-  const numTh = document.createElement('th');
-  numTh.textContent = 'စဉ်';
-  tr.appendChild(numTh);
-  cols.forEach(col => {
-    const th = document.createElement('th');
-    th.textContent = col;
-    tr.appendChild(th);
+  // Row number
+  const thNum = document.createElement('th'); thNum.textContent = 'စဉ်'; tr.appendChild(thNum);
+  // Type
+  const thType = document.createElement('th'); thType.textContent = 'အမျိုးအစား'; tr.appendChild(thType);
+  // Data cols
+  combinedHeaders.forEach(h => {
+    const th = document.createElement('th'); th.textContent = h; tr.appendChild(th);
   });
   thead.appendChild(tr);
 
   // Body
   tbody.innerHTML = '';
-  if (rows.length === 0) {
-    nodata.style.display = 'block';
-    return;
-  }
+  if (rows.length === 0) { nodata.style.display = 'block'; return; }
   nodata.style.display = 'none';
 
   rows.forEach((row, i) => {
     const tr = document.createElement('tr');
-    const numTd = document.createElement('td');
-    numTd.textContent = i + 1;
-    numTd.style.color = '#999';
-    numTd.style.fontSize = '0.82rem';
-    tr.appendChild(numTd);
+    tr.classList.add(row.type === 'ဝင်ငွေ' ? 'row-income' : 'row-outgoing');
 
-    row.forEach(cell => {
+    const tdNum = document.createElement('td');
+    tdNum.textContent = i + 1;
+    tdNum.style.color = '#999'; tdNum.style.fontSize = '0.8rem';
+    tr.appendChild(tdNum);
+
+    const tdType = document.createElement('td');
+    const badge = document.createElement('span');
+    badge.classList.add('badge', row.type === 'ဝင်ငွေ' ? 'badge-income' : 'badge-outgoing');
+    badge.textContent = row.type === 'ဝင်ငွေ' ? '📈 ဝင်ငွေ' : '📉 ထွက်ငွေ';
+    tdType.appendChild(badge);
+    tr.appendChild(tdType);
+
+    row.cols.forEach((cell, ci) => {
       const td = document.createElement('td');
       const val = String(cell);
-      // Try to detect numeric/money columns and color them
-      const numVal = parseFloat(String(cell).replace(/,/g, ''));
-      if (!isNaN(numVal) && String(cell).trim() !== '') {
-        if (sheetKey === 'incomes') {
-          td.classList.add('num-positive');
-        } else {
-          td.classList.add('num-negative');
-        }
-        td.textContent = val;
-      } else {
-        td.textContent = val;
+      const num = parseFloat(val.replace(/,/g, ''));
+      // Last column or numeric — color it
+      if (!isNaN(num) && val.trim() !== '') {
+        td.classList.add(row.type === 'ဝင်ငွေ' ? 'num-income' : 'num-outgoing');
       }
+      td.textContent = val;
       tr.appendChild(td);
     });
     tbody.appendChild(tr);
@@ -133,90 +188,21 @@ function renderTable(sheetKey, rows, cols) {
 }
 
 // ================================================================
-//  SUMMARY
-// ================================================================
-function sumLastNumericCol(rows) {
-  let total = 0;
-  rows.forEach(row => {
-    for (let i = row.length - 1; i >= 0; i--) {
-      const v = parseFloat(String(row[i]).replace(/,/g, ''));
-      if (!isNaN(v)) { total += v; break; }
-    }
-  });
-  return total;
-}
-
-function formatNum(n) {
-  return n.toLocaleString('en-US');
-}
-
-function updateSummary() {
-  const inc  = sumLastNumericCol(allData.incomes);
-  const out  = sumLastNumericCol(allData.outgoings);
-  const bal  = inc - out;
-  document.getElementById('total-income').textContent   = formatNum(inc);
-  document.getElementById('total-outgoing').textContent = formatNum(out);
-  const balEl = document.getElementById('balance');
-  balEl.textContent = formatNum(bal);
-  balEl.style.color = bal >= 0 ? 'var(--income-green)' : 'var(--outgoing-red)';
-}
-
-// ================================================================
 //  FILTERS
 // ================================================================
-function populateFilters() {
-  // Populate dropdowns based on first two columns
-  populateDropdown('col-filter-1', 0);
-  populateDropdown('col-filter-2', 1);
-}
-
-function populateDropdown(selectId, colIndex) {
-  const sel = document.getElementById(selectId);
-  const data = allData[activeTab];
-  const values = [...new Set(data.map(row => row[colIndex]).filter(Boolean))];
-  sel.innerHTML = '<option value="">အားလုံး</option>';
-  values.forEach(v => {
-    const opt = document.createElement('option');
-    opt.value = v;
-    opt.textContent = v;
-    sel.appendChild(opt);
-  });
-}
-
 function applyFilters() {
   const search = document.getElementById('search-input').value.toLowerCase();
-  const f1 = document.getElementById('col-filter-1').value;
-  const f2 = document.getElementById('col-filter-2').value;
-  const data = allData[activeTab];
-  const cols = headers[activeTab];
+  const typeF  = document.getElementById('type-filter').value;
+  const colF   = document.getElementById('col-filter').value;
 
-  const filtered = data.filter(row => {
-    const matchSearch = !search || row.some(c => String(c).toLowerCase().includes(search));
-    const match1 = !f1 || String(row[0]) === f1;
-    const match2 = !f2 || String(row[1]) === f2;
-    return matchSearch && match1 && match2;
+  const filtered = allRows.filter(row => {
+    const matchSearch = !search || row.cols.some(c => String(c).toLowerCase().includes(search));
+    const matchType   = !typeF  || row.type === typeF;
+    const matchCol    = !colF   || String(row.cols[0]) === colF;
+    return matchSearch && matchType && matchCol;
   });
 
-  renderTable(activeTab, filtered, cols);
-}
-
-// ================================================================
-//  TAB SWITCH
-// ================================================================
-function switchTab(tab) {
-  activeTab = tab;
-  document.querySelectorAll('.tab-btn').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.tab === tab);
-  });
-  document.querySelectorAll('.table-section').forEach(sec => {
-    sec.classList.toggle('hidden', sec.id !== `tab-${tab}`);
-  });
-  // reset filters
-  document.getElementById('search-input').value = '';
-  document.getElementById('col-filter-1').value = '';
-  document.getElementById('col-filter-2').value = '';
-  populateFilters();
-  applyFilters();
+  renderTable(filtered);
 }
 
 // ================================================================
