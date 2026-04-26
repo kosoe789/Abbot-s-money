@@ -4,13 +4,8 @@
 const SHEET_ID = '1LpXHsyhyjmOV_S5BYw7imBwgHIsSMsaE6Qt6VyVtuos';
 const SHEETS = { incomes: 'incomes', outgoings: 'outgoings' };
 
-// Columns to exclude (exact match after trim)
-const EXCLUDE_COLS = [
-  'မေဃဝတီဆရာတော်နှင့်ဆက်စပ်ရငွေစာရင်း အစဥ်',
-  'မေဃဝတီဆရာတော်နှင့်ဆက်စပ်သုံးငွေစာရင်း အစဥ်',
-  'မေဃဝတီဆရာတော်နှင့်ဆက်စပ်သုံးငွေစာရင်း',
-  'မေဃဝတီဆရာတော်နှင့်ဆက်စပ်ရငွေစာရင်း',
-];
+// Columns to exclude
+const EXCLUDE_COLS = ['အစဥ်'];
 
 // ================================================================
 //  STATE
@@ -19,23 +14,24 @@ let allRows = [];
 let combinedHeaders = [];
 
 // ================================================================
-//  FETCH
+//  FETCH — Sheet has title in row1, empty row2, headers in row3
+//  So we fetch with range starting from row 3
 // ================================================================
 function sheetUrl(name) {
-  return `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(name)}`;
+  return `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(name)}&range=A3:Z1000`;
 }
 
 async function fetchSheet(name) {
   const res = await fetch(sheetUrl(name));
   const text = await res.text();
   const json = JSON.parse(text.slice(text.indexOf('(') + 1, text.lastIndexOf(')')));
+
   const cols = json.table.cols.map(c => (c.label || c.id || '').trim());
   const rows = (json.table.rows || []).map(row =>
     row.c.map(cell => {
       if (!cell) return '';
-      // Prefer formatted value (f), fallback to raw value (v)
-      if (cell.f !== undefined && cell.f !== null) return cell.f;
-      if (cell.v !== undefined && cell.v !== null) return cell.v;
+      if (cell.f !== undefined && cell.f !== null) return String(cell.f);
+      if (cell.v !== undefined && cell.v !== null) return String(cell.v);
       return '';
     })
   );
@@ -52,25 +48,24 @@ async function init() {
       fetchSheet(SHEETS.outgoings)
     ]);
 
-    // Filter out excluded columns, get indices to keep
+    // Keep only non-excluded, non-empty columns
     function getKeepIndices(cols) {
-      return cols.map((c, i) => ({ c, i }))
-                 .filter(({ c }) => !EXCLUDE_COLS.some(ex => c.includes(ex) || ex.includes(c)))
-                 .map(({ c, i }) => ({ col: c, idx: i }));
+      return cols
+        .map((c, i) => ({ col: c, idx: i }))
+        .filter(({ col }) => col !== '' && !EXCLUDE_COLS.includes(col.trim()));
     }
 
     const incKeep = getKeepIndices(inc.cols);
     const outKeep = getKeepIndices(out.cols);
 
-    // Build combined headers (union of both sheets' kept cols)
+    // Build unified headers
     const incColNames = incKeep.map(k => k.col);
     const outColNames = outKeep.map(k => k.col);
     combinedHeaders = [...incColNames];
     outColNames.forEach(c => { if (c && !combinedHeaders.includes(c)) combinedHeaders.push(c); });
 
-    // Map a row to combined headers using keep indices
+    // Map row to combined headers
     function mapRow(row, keepList, type) {
-      // Build a map: colName -> value
       const valMap = {};
       keepList.forEach(({ col, idx }) => {
         valMap[col] = row[idx] !== undefined ? String(row[idx]) : '';
@@ -79,7 +74,6 @@ async function init() {
       return { type, cols: mapped };
     }
 
-    // Filter empty rows
     const isEmptyRow = r => r.every(c => String(c).trim() === '');
 
     const incRows = inc.rows.filter(r => !isEmptyRow(r)).map(r => mapRow(r, incKeep, 'ဝင်ငွေ'));
@@ -95,6 +89,7 @@ async function init() {
 
     document.getElementById('last-updated').textContent =
       'နောက်ဆုံးပြင်ဆင်ချိန်: ' + new Date().toLocaleString('my-MM');
+
   } catch (e) {
     document.getElementById('loading-main').innerHTML =
       `<span style="color:#e74c3c">❌ Sheet ဖတ်၍မရပါ။ Sheet ကို <b>Anyone with link → Viewer</b> ထားပြီး refresh လုပ်ပါ။</span>`;
@@ -103,12 +98,11 @@ async function init() {
 }
 
 // ================================================================
-//  NAME FILTER — find "နာမည်" column index and populate dropdown
+//  NAME FILTER
 // ================================================================
 function getNameColIndex() {
-  // Look for column whose name contains "နာမည်"
   const idx = combinedHeaders.findIndex(h => h.includes('နာမည်'));
-  return idx >= 0 ? idx : 0; // fallback to first col
+  return idx >= 0 ? idx : 0;
 }
 
 function buildNameFilter() {
@@ -124,24 +118,23 @@ function buildNameFilter() {
 }
 
 // ================================================================
-//  SUMMARY — find last numeric column per row (amount column)
+//  SUMMARY — ပမာဏ column (index 1, value "ပမာဏ") ကနေ တွက်မည်
 // ================================================================
+function getAmountColIndex() {
+  const idx = combinedHeaders.findIndex(h => h.includes('ပမာဏ'));
+  return idx >= 0 ? idx : combinedHeaders.length - 1;
+}
+
 function parseAmount(val) {
-  if (val === '' || val === null || val === undefined) return NaN;
   return parseFloat(String(val).replace(/,/g, '').replace(/[^0-9.-]/g, ''));
 }
 
 function sumRows(rows) {
+  const amtIdx = getAmountColIndex();
   let total = 0;
   rows.forEach(r => {
-    // Find the last column with a valid positive number (amount)
-    for (let i = r.cols.length - 1; i >= 0; i--) {
-      const v = parseAmount(r.cols[i]);
-      if (!isNaN(v) && v > 0) {
-        total += v;
-        break;
-      }
-    }
+    const v = parseAmount(r.cols[amtIdx]);
+    if (!isNaN(v)) total += v;
   });
   return total;
 }
@@ -168,9 +161,9 @@ function updateSummary() {
 //  RENDER TABLE
 // ================================================================
 function renderTable(rows) {
-  const thead   = document.getElementById('main-thead');
-  const tbody   = document.getElementById('main-tbody');
-  const nodata  = document.getElementById('nodata-main');
+  const thead  = document.getElementById('main-thead');
+  const tbody  = document.getElementById('main-tbody');
+  const nodata = document.getElementById('nodata-main');
 
   // Header
   thead.innerHTML = '';
@@ -187,17 +180,17 @@ function renderTable(rows) {
   if (rows.length === 0) { nodata.style.display = 'block'; return; }
   nodata.style.display = 'none';
 
+  const amtIdx = getAmountColIndex();
+
   rows.forEach((row, i) => {
     const tr = document.createElement('tr');
     const isIncome = row.type === 'ဝင်ငွေ';
 
-    // Row number
     const tdNum = document.createElement('td');
     tdNum.textContent = i + 1;
-    tdNum.style.cssText = 'color:#999;font-size:0.8rem;';
+    tdNum.style.cssText = 'color:#999;font-size:0.8rem;text-align:center;';
     tr.appendChild(tdNum);
 
-    // Type badge
     const tdType = document.createElement('td');
     const badge = document.createElement('span');
     badge.className = 'badge ' + (isIncome ? 'badge-income' : 'badge-outgoing');
@@ -205,15 +198,21 @@ function renderTable(rows) {
     tdType.appendChild(badge);
     tr.appendChild(tdType);
 
-    // Data cells
-    row.cols.forEach(cell => {
+    row.cols.forEach((cell, ci) => {
       const td = document.createElement('td');
       const val = String(cell);
-      const num = parseAmount(val);
-      if (!isNaN(num) && num > 0 && val.trim() !== '') {
-        td.classList.add(isIncome ? 'num-income' : 'num-outgoing');
+      if (ci === amtIdx) {
+        const num = parseAmount(val);
+        if (!isNaN(num)) {
+          td.classList.add(isIncome ? 'num-income' : 'num-outgoing');
+          td.textContent = Math.round(num).toLocaleString('en-US');
+          td.style.textAlign = 'right';
+        } else {
+          td.textContent = val;
+        }
+      } else {
+        td.textContent = val;
       }
-      td.textContent = val;
       tr.appendChild(td);
     });
 
