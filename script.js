@@ -4,10 +4,18 @@
 const SHEET_ID = '1LpXHsyhyjmOV_S5BYw7imBwgHIsSMsaE6Qt6VyVtuos';
 const SHEETS = { incomes: 'incomes', outgoings: 'outgoings' };
 
+// Columns to exclude (exact match after trim)
+const EXCLUDE_COLS = [
+  'မေဃဝတီဆရာတော်နှင့်ဆက်စပ်ရငွေစာရင်း အစဥ်',
+  'မေဃဝတီဆရာတော်နှင့်ဆက်စပ်သုံးငွေစာရင်း အစဥ်',
+  'မေဃဝတီဆရာတော်နှင့်ဆက်စပ်သုံးငွေစာရင်း',
+  'မေဃဝတီဆရာတော်နှင့်ဆက်စပ်ရငွေစာရင်း',
+];
+
 // ================================================================
 //  STATE
 // ================================================================
-let allRows = [];       // combined rows: { type, cols:[] }
+let allRows = [];
 let combinedHeaders = [];
 
 // ================================================================
@@ -21,11 +29,14 @@ async function fetchSheet(name) {
   const res = await fetch(sheetUrl(name));
   const text = await res.text();
   const json = JSON.parse(text.slice(text.indexOf('(') + 1, text.lastIndexOf(')')));
-  const cols = json.table.cols.map(c => c.label || c.id);
+  const cols = json.table.cols.map(c => (c.label || c.id || '').trim());
   const rows = (json.table.rows || []).map(row =>
     row.c.map(cell => {
       if (!cell) return '';
-      return cell.f !== undefined && cell.f !== null ? cell.f : (cell.v !== null && cell.v !== undefined ? cell.v : '');
+      // Prefer formatted value (f), fallback to raw value (v)
+      if (cell.f !== undefined && cell.f !== null) return cell.f;
+      if (cell.v !== undefined && cell.v !== null) return cell.v;
+      return '';
     })
   );
   return { cols, rows };
@@ -41,42 +52,44 @@ async function init() {
       fetchSheet(SHEETS.outgoings)
     ]);
 
-    // Build unified headers: merge both sheets' headers (excluding duplicate "မေဃဝတီဆရာတော်နှင့်ဆက်စပ်သုံးငွေစာရင်း" type cols)
-    const EXCLUDE = ['မေဃဝတီဆရာတော်နှင့်ဆက်စပ်သုံးငွေစာရင်း'];
+    // Filter out excluded columns, get indices to keep
+    function getKeepIndices(cols) {
+      return cols.map((c, i) => ({ c, i }))
+                 .filter(({ c }) => !EXCLUDE_COLS.some(ex => c.includes(ex) || ex.includes(c)))
+                 .map(({ c, i }) => ({ col: c, idx: i }));
+    }
 
-    const incCols = inc.cols.filter(c => !EXCLUDE.includes(c.trim()));
-    const outCols = out.cols.filter(c => !EXCLUDE.includes(c.trim()));
+    const incKeep = getKeepIndices(inc.cols);
+    const outKeep = getKeepIndices(out.cols);
 
-    // Use incomes headers as base, add any extra from outgoings
-    combinedHeaders = [...incCols];
-    outCols.forEach(c => { if (!combinedHeaders.includes(c)) combinedHeaders.push(c); });
+    // Build combined headers (union of both sheets' kept cols)
+    const incColNames = incKeep.map(k => k.col);
+    const outColNames = outKeep.map(k => k.col);
+    combinedHeaders = [...incColNames];
+    outColNames.forEach(c => { if (c && !combinedHeaders.includes(c)) combinedHeaders.push(c); });
 
-    // Map rows to combined headers
-    function mapRow(row, origCols, type) {
-      const filtered = origCols
-        .map((col, i) => ({ col: col.trim(), val: row[i] !== undefined ? row[i] : '' }))
-        .filter(({ col }) => !EXCLUDE.includes(col));
-
-      const mapped = combinedHeaders.map(h => {
-        const found = filtered.find(f => f.col === h);
-        return found ? found.val : '';
+    // Map a row to combined headers using keep indices
+    function mapRow(row, keepList, type) {
+      // Build a map: colName -> value
+      const valMap = {};
+      keepList.forEach(({ col, idx }) => {
+        valMap[col] = row[idx] !== undefined ? String(row[idx]) : '';
       });
+      const mapped = combinedHeaders.map(h => valMap[h] !== undefined ? valMap[h] : '');
       return { type, cols: mapped };
     }
 
-    // Filter out completely empty rows
-    const incRows = inc.rows
-      .filter(r => r.some(c => String(c).trim() !== ''))
-      .map(r => mapRow(r, inc.cols, 'ဝင်ငွေ'));
-    const outRows = out.rows
-      .filter(r => r.some(c => String(c).trim() !== ''))
-      .map(r => mapRow(r, out.cols, 'ထွက်ငွေ'));
+    // Filter empty rows
+    const isEmptyRow = r => r.every(c => String(c).trim() === '');
+
+    const incRows = inc.rows.filter(r => !isEmptyRow(r)).map(r => mapRow(r, incKeep, 'ဝင်ငွေ'));
+    const outRows = out.rows.filter(r => !isEmptyRow(r)).map(r => mapRow(r, outKeep, 'ထွက်ငွေ'));
 
     allRows = [...incRows, ...outRows];
 
     document.getElementById('loading-main').style.display = 'none';
 
-    buildColFilter();
+    buildNameFilter();
     updateSummary();
     applyFilters();
 
@@ -90,11 +103,18 @@ async function init() {
 }
 
 // ================================================================
-//  BUILD COLUMN FILTER (first non-empty column values)
+//  NAME FILTER — find "နာမည်" column index and populate dropdown
 // ================================================================
-function buildColFilter() {
+function getNameColIndex() {
+  // Look for column whose name contains "နာမည်"
+  const idx = combinedHeaders.findIndex(h => h.includes('နာမည်'));
+  return idx >= 0 ? idx : 0; // fallback to first col
+}
+
+function buildNameFilter() {
   const sel = document.getElementById('col-filter');
-  const vals = [...new Set(allRows.map(r => String(r.cols[0])).filter(Boolean))];
+  const nameIdx = getNameColIndex();
+  const vals = [...new Set(allRows.map(r => String(r.cols[nameIdx]).trim()).filter(Boolean))].sort();
   sel.innerHTML = '<option value="">အားလုံး</option>';
   vals.forEach(v => {
     const o = document.createElement('option');
@@ -104,25 +124,39 @@ function buildColFilter() {
 }
 
 // ================================================================
-//  SUMMARY
+//  SUMMARY — find last numeric column per row (amount column)
 // ================================================================
-function sumAmount(rows) {
+function parseAmount(val) {
+  if (val === '' || val === null || val === undefined) return NaN;
+  return parseFloat(String(val).replace(/,/g, '').replace(/[^0-9.-]/g, ''));
+}
+
+function sumRows(rows) {
   let total = 0;
   rows.forEach(r => {
+    // Find the last column with a valid positive number (amount)
     for (let i = r.cols.length - 1; i >= 0; i--) {
-      const v = parseFloat(String(r.cols[i]).replace(/,/g, ''));
-      if (!isNaN(v)) { total += v; break; }
+      const v = parseAmount(r.cols[i]);
+      if (!isNaN(v) && v > 0) {
+        total += v;
+        break;
+      }
     }
   });
   return total;
 }
 
-function fmt(n) { return n.toLocaleString('en-US'); }
+function fmt(n) {
+  return Math.round(n).toLocaleString('en-US');
+}
 
 function updateSummary() {
-  const inc = sumAmount(allRows.filter(r => r.type === 'ဝင်ငွေ'));
-  const out = sumAmount(allRows.filter(r => r.type === 'ထွက်ငွေ'));
+  const incRows = allRows.filter(r => r.type === 'ဝင်ငွေ');
+  const outRows = allRows.filter(r => r.type === 'ထွက်ငွေ');
+  const inc = sumRows(incRows);
+  const out = sumRows(outRows);
   const bal = inc - out;
+
   document.getElementById('total-income').textContent   = fmt(inc);
   document.getElementById('total-outgoing').textContent = fmt(out);
   const balEl = document.getElementById('balance');
@@ -131,21 +165,18 @@ function updateSummary() {
 }
 
 // ================================================================
-//  RENDER
+//  RENDER TABLE
 // ================================================================
 function renderTable(rows) {
-  const thead = document.getElementById('main-thead');
-  const tbody = document.getElementById('main-tbody');
-  const nodata = document.getElementById('nodata-main');
+  const thead   = document.getElementById('main-thead');
+  const tbody   = document.getElementById('main-tbody');
+  const nodata  = document.getElementById('nodata-main');
 
   // Header
   thead.innerHTML = '';
   const tr = document.createElement('tr');
-  // Row number
   const thNum = document.createElement('th'); thNum.textContent = 'စဉ်'; tr.appendChild(thNum);
-  // Type
   const thType = document.createElement('th'); thType.textContent = 'အမျိုးအစား'; tr.appendChild(thType);
-  // Data cols
   combinedHeaders.forEach(h => {
     const th = document.createElement('th'); th.textContent = h; tr.appendChild(th);
   });
@@ -158,31 +189,34 @@ function renderTable(rows) {
 
   rows.forEach((row, i) => {
     const tr = document.createElement('tr');
-    tr.classList.add(row.type === 'ဝင်ငွေ' ? 'row-income' : 'row-outgoing');
+    const isIncome = row.type === 'ဝင်ငွေ';
 
+    // Row number
     const tdNum = document.createElement('td');
     tdNum.textContent = i + 1;
-    tdNum.style.color = '#999'; tdNum.style.fontSize = '0.8rem';
+    tdNum.style.cssText = 'color:#999;font-size:0.8rem;';
     tr.appendChild(tdNum);
 
+    // Type badge
     const tdType = document.createElement('td');
     const badge = document.createElement('span');
-    badge.classList.add('badge', row.type === 'ဝင်ငွေ' ? 'badge-income' : 'badge-outgoing');
-    badge.textContent = row.type === 'ဝင်ငွေ' ? '📈 ဝင်ငွေ' : '📉 ထွက်ငွေ';
+    badge.className = 'badge ' + (isIncome ? 'badge-income' : 'badge-outgoing');
+    badge.textContent = isIncome ? '📈 ဝင်ငွေ' : '📉 ထွက်ငွေ';
     tdType.appendChild(badge);
     tr.appendChild(tdType);
 
-    row.cols.forEach((cell, ci) => {
+    // Data cells
+    row.cols.forEach(cell => {
       const td = document.createElement('td');
       const val = String(cell);
-      const num = parseFloat(val.replace(/,/g, ''));
-      // Last column or numeric — color it
-      if (!isNaN(num) && val.trim() !== '') {
-        td.classList.add(row.type === 'ဝင်ငွေ' ? 'num-income' : 'num-outgoing');
+      const num = parseAmount(val);
+      if (!isNaN(num) && num > 0 && val.trim() !== '') {
+        td.classList.add(isIncome ? 'num-income' : 'num-outgoing');
       }
       td.textContent = val;
       tr.appendChild(td);
     });
+
     tbody.appendChild(tr);
   });
 }
@@ -191,15 +225,16 @@ function renderTable(rows) {
 //  FILTERS
 // ================================================================
 function applyFilters() {
-  const search = document.getElementById('search-input').value.toLowerCase();
-  const typeF  = document.getElementById('type-filter').value;
-  const colF   = document.getElementById('col-filter').value;
+  const search  = document.getElementById('search-input').value.toLowerCase().trim();
+  const typeF   = document.getElementById('type-filter').value;
+  const nameF   = document.getElementById('col-filter').value;
+  const nameIdx = getNameColIndex();
 
   const filtered = allRows.filter(row => {
     const matchSearch = !search || row.cols.some(c => String(c).toLowerCase().includes(search));
     const matchType   = !typeF  || row.type === typeF;
-    const matchCol    = !colF   || String(row.cols[0]) === colF;
-    return matchSearch && matchType && matchCol;
+    const matchName   = !nameF  || String(row.cols[nameIdx]).trim() === nameF;
+    return matchSearch && matchType && matchName;
   });
 
   renderTable(filtered);
