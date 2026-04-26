@@ -1,7 +1,7 @@
 :root {
-  --primary: #1b3a6b;
-  --primary-dark: #122a52;
-  --primary-light: #2451a0;
+  --primary: #1a5c4a;
+  --primary-dark: #134035;
+  --primary-light: #237a60;
   --accent-gold: #c9a84c;
   --income-green: #1a7a4a;
   --outgoing-red: #c0392b;
@@ -27,7 +27,7 @@ body {
 
 /* HEADER */
 .site-header {
-  background: linear-gradient(135deg, #1b3a6b 0%, #2451a0 60%, #1b3a6b 100%);
+  background: linear-gradient(135deg, #1a5c4a 0%, #237a60 60%, #1a5c4a 100%);
   color: white;
   padding: 22px 0 18px;
   border-bottom: 4px solid var(--accent-gold);
@@ -207,3 +207,7 @@ tbody td { padding: 10px 16px; }
   .header-inner { gap: 14px; }
   thead th, tbody td { padding: 8px 10px; font-size: 0.8rem; }
 }
+
+/* Amount column alignment */
+.col-amount { text-align: right !important; }
+thead th.col-amount { text-align: right !important; }
