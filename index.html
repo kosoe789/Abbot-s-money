@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="my">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>ဝင်ငွေ / ထွက်ငွေ မှတ်တမ်း</title>
+  <link rel="stylesheet" href="style.css" />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Myanmar:wght@400;600;700&display=swap" rel="stylesheet"/>
+</head>
+<body>
+
+  <header class="site-header">
+    <div class="header-inner">
+      <div class="header-title">
+        <h1>💰 ဝင်ငွေ / ထွက်ငွေ မှတ်တမ်း</h1>
+        <p class="subtitle">Income &amp; Outgoing Tracker</p>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+
+    <!-- Tab Buttons -->
+    <div class="tab-bar">
+      <button class="tab-btn active" data-tab="incomes" onclick="switchTab('incomes')">
+        📈 ဝင်ငွေ (Incomes)
+      </button>
+      <button class="tab-btn" data-tab="outgoings" onclick="switchTab('outgoings')">
+        📉 ထွက်ငွေ (Outgoings)
+      </button>
+    </div>
+
+    <!-- Summary Card -->
+    <div class="summary-bar">
+      <div class="summary-card income-card">
+        <span class="summary-label">စုစုပေါင်း ဝင်ငွေ</span>
+        <span class="summary-value" id="total-income">တွက်နေသည်...</span>
+      </div>
+      <div class="summary-card out-card">
+        <span class="summary-label">စုစုပေါင်း ထွက်ငွေ</span>
+        <span class="summary-value" id="total-outgoing">တွက်နေသည်...</span>
+      </div>
+      <div class="summary-card balance-card">
+        <span class="summary-label">လက်ကျန်</span>
+        <span class="summary-value" id="balance">တွက်နေသည်...</span>
+      </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="filters" id="filters-bar">
+      <div class="filter-group">
+        <label>🔍 ရှာဖွေရန်</label>
+        <input type="text" id="search-input" placeholder="ရှာဖွေမည်..." oninput="applyFilters()" />
+      </div>
+      <div class="filter-group">
+        <label>📅 ဆေးလ်</label>
+        <select id="col-filter-1" onchange="applyFilters()">
+          <option value="">အားလုံး</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <label>🏷️ အမျိုးအစား</label>
+        <select id="col-filter-2" onchange="applyFilters()">
+          <option value="">အားလုံး</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- Table Section -->
+    <div class="table-section" id="tab-incomes">
+      <div class="loading-msg" id="loading-incomes">
+        <div class="spinner"></div> ဒေတာ ခေါ်နေသည်...
+      </div>
+      <div class="table-wrap">
+        <table id="table-incomes">
+          <thead id="thead-incomes"></thead>
+          <tbody id="tbody-incomes"></tbody>
+        </table>
+      </div>
+      <div class="no-data" id="nodata-incomes" style="display:none">ဒေတာ မတွေ့ပါ</div>
+    </div>
+
+    <div class="table-section hidden" id="tab-outgoings">
+      <div class="loading-msg" id="loading-outgoings">
+        <div class="spinner"></div> ဒေတာ ခေါ်နေသည်...
+      </div>
+      <div class="table-wrap">
+        <table id="table-outgoings">
+          <thead id="thead-outgoings"></thead>
+          <tbody id="tbody-outgoings"></tbody>
+        </table>
+      </div>
+      <div class="no-data" id="nodata-outgoings" style="display:none">ဒေတာ မတွေ့ပါ</div>
+    </div>
+
+    <p class="last-updated" id="last-updated"></p>
+  </main>
+
+  <footer class="site-footer">
+    <p>ဒေတာကို Google Sheets မှ တိုက်ရိုက် ဆွဲယူသည်</p>
+  </footer>
+
+  <script src="script.js"></script>
+</body>
+</html>
