@@ -170,8 +170,8 @@ function renderTable(rows) {
   const tr = document.createElement('tr');
   const thNum = document.createElement('th'); thNum.textContent = 'စဉ်'; tr.appendChild(thNum);
   const thType = document.createElement('th'); thType.textContent = 'အမျိုးအစား'; tr.appendChild(thType);
-  combinedHeaders.forEach(h => {
-    const th = document.createElement('th'); th.textContent = h; tr.appendChild(th);
+  combinedHeaders.forEach((h, hi) => {
+    const th = document.createElement("th"); th.textContent = h; if (hi === getAmountColIndex()) th.classList.add("col-amount"); tr.appendChild(th);
   });
   thead.appendChild(tr);
 
