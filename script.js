@@ -52,14 +52,20 @@ async function init() {
       fetchSheet(SHEETS.outgoings)
     ]);
 
-    function getKeepIndices(cols) {
+    function getKeepIndices(cols, rows) {
       return cols
         .map((c, i) => ({ col: c, idx: i }))
-        .filter(({ col }) => col !== '' && !EXCLUDE_COLS.includes(col.trim()));
+        .filter(({ col, idx }) => {
+          if (col === '' || col === 'undefined') return false;
+          if (EXCLUDE_COLS.includes(col.trim())) return false;
+          // Remove columns where every row value is empty
+          const hasData = rows.some(row => row[idx] !== undefined && String(row[idx]).trim() !== '');
+          return hasData;
+        });
     }
 
-    const incKeep = getKeepIndices(inc.cols);
-    const outKeep = getKeepIndices(out.cols);
+    const incKeep = getKeepIndices(inc.cols, inc.rows);
+    const outKeep = getKeepIndices(out.cols, out.rows);
 
     // Build union of columns
     const allCols = [...new Set([
