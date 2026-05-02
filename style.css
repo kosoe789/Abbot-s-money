@@ -209,3 +209,10 @@ thead th.col-amount { text-align: right !important; }
   .header-inner { gap: 14px; }
   thead th, tbody td { padding: 8px 10px; font-size: 0.82rem; }
 }
+
+/* Extra spacing for amount column */
+thead th.col-amount,
+tbody td.col-amount {
+  padding-right: 32px !important;
+  min-width: 130px;
+}
